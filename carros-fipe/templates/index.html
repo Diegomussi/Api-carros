@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consulta FIPE com histórico e alertas</title>
+<style>
+  :root {
+    --ink:#16213a; --muted:#4d566a; --paper:#eceff2; --surface:#fff; --rule:#cfd5dd;
+    --blue:#1f4aa8; --blue-dark:#173a86; --error:#a12622; --ok:#1d6b3a;
+    --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:400 17px/1.5 var(--body); }
+  main { max-width:920px; margin:0 auto; padding:48px 20px 80px; }
+  h1 { font-size:clamp(2rem,5vw,3rem); line-height:1.05; margin:0 0 12px; }
+  h2 { font-size:1.3rem; margin:40px 0 8px; }
+  .lead { color:var(--muted); margin:0 0 28px; max-width:56ch; }
+  .card { background:var(--surface); border:3px solid var(--ink); border-radius:12px; padding:18px; box-shadow:0 2px 0 var(--ink); }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px 18px; }
+  label { display:block; font-size:.9rem; color:var(--muted); margin-bottom:4px; }
+  select, input { width:100%; font:inherit; color:var(--ink); background:#fff; border:1px solid var(--rule); border-radius:6px; padding:9px 10px; }
+  select:disabled, input:disabled { background:#f3f4f6; }
+  button { font:600 1rem var(--body); background:var(--blue); color:#fff; border:0; border-radius:8px; padding:11px 20px; cursor:pointer; }
+  button:hover { background:var(--blue-dark); }
+  button:disabled { background:#8a93a5; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--error); border:1px solid var(--error); padding:6px 12px; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
+  #status { margin:18px 0 0; min-height:1.5em; }
+  #status.error { color:var(--error); font-weight:500; }
+  .price { font-size:2.6rem; font-weight:700; line-height:1; margin:6px 0; }
+  .meta { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--rule); }
+  th { font-size:.85rem; color:var(--muted); font-weight:500; }
+  #grafico svg { width:100%; height:auto; display:block; margin-top:8px; }
+  #grafico .eixo { stroke:var(--rule); stroke-width:1; }
+  #grafico .linha { fill:none; stroke:var(--blue); stroke-width:3; stroke-linejoin:round; stroke-linecap:round; }
+  #grafico .ponto { fill:#fff; stroke:var(--blue); stroke-width:3; }
+  #grafico .ponto.ultimo { fill:var(--blue); }
+  #grafico text { font:12px var(--body); fill:var(--muted); }
+  .up { color:var(--error); } .down { color:var(--ok); }
+  .row { display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin-top:12px; }
+  .row > div { flex:1; min-width:180px; }
+  ul { list-style:none; margin:0; padding:0; }
+  li.alerta { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 0; border-top:1px solid var(--rule); }
+  @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quanto vale? Consulte a tabela FIPE.</h1>
+  <p class="lead">Escolha o veículo, veja o preço de referência do mês, acompanhe o histórico e crie um alerta de preço-alvo.</p>
+
+  <section class="card" aria-label="Consulta">
+    <div class="grid">
+      <div><label for="tipo">Tipo</label>
+        <select id="tipo">
+          <option value="cars">Carro</option>
+          <option value="motorcycles">Moto</option>
+          <option value="trucks">Caminhão</option>
+        </select></div>
+      <div><label for="marca">Marca</label><select id="marca" disabled></select></div>
+      <div><label for="filtro">Filtrar modelos (digite parte do nome)</label><input id="filtro" disabled placeholder="ex.: renegade"></div>
+      <div><label for="modelo">Modelo</label><select id="modelo" disabled></select></div>
+      <div><label for="ano">Ano / combustível</label><select id="ano" disabled></select></div>
+      <div style="align-self:end"><button id="consultar" disabled>Consultar preço</button></div>
+    </div>
+  </section>
+
+  <p id="status" role="status" aria-live="polite"></p>
+
+  <section id="resultado" hidden>
+    <div class="card">
+      <div class="meta" id="r-ref"></div>
+      <div class="price" id="r-preco"></div>
+      <div id="r-nome"></div>
+      <div class="meta" id="r-det"></div>
+
+      <h2>Histórico de preços</h2>
+      <div id="grafico"></div>
+      <table><thead><tr><th>Mês de referência</th><th>Preço</th><th>Variação</th></tr></thead><tbody id="hist"></tbody></table>
+
+      <h2>Alerta de preço-alvo</h2>
+      <div class="row">
+        <div><label for="alvo">Avisar quando a FIPE chegar a (R$)</label><input id="alvo" inputmode="numeric" placeholder="ex.: 85000"></div>
+        <button id="criar-alerta">Criar alerta</button>
+      </div>
+    </div>
+  </section>
+
+  <h2>Seus alertas</h2>
+  <p class="meta">Para receber os avisos, rode <code>python verificar_alertas.py</code> (veja o README para agendar).</p>
+  <ul id="alertas"></ul>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const brl = new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL', maximumFractionDigits:0 });
+  let modelosCache = [];
+  let atual = null; // seleção da última consulta
+
+  function msg(texto, erro) { $('status').textContent = texto || ''; $('status').className = erro ? 'error' : ''; }
+
+  async function api(url, opcoes) {
+    const resp = await fetch(url, opcoes);
+    if (resp.status === 204) return null;
+    const dados = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(dados.erro || 'Erro na consulta.');
+    return dados;
+  }
+
+  function preencher(select, itens, rotulo) {
+    select.replaceChildren();
+    const o = document.createElement('option');
+    o.value = ''; o.textContent = rotulo;
+    select.append(o);
+    for (const i of itens) {
+      const op = document.createElement('option');
+      op.value = i.code; op.textContent = i.name;
+      select.append(op);
+    }
+    select.disabled = itens.length === 0;
+  }
+
+  function atualizarBotao() { $('consultar').disabled = !(('' + $('ano').value).length); }
+
+  async function carregarMarcas() {
+    msg('Carregando marcas...');
+    ['modelo','ano'].forEach((i) => { preencher($(i), [], '—'); });
+    $('filtro').disabled = true; atualizarBotao();
+    try {
+      preencher($('marca'), await api(`/api/${$('tipo').value}/marcas`), 'Escolha a marca');
+      msg('');
+    } catch (e) { msg(e.message, true); }
+  }
+
+  async function carregarModelos() {
+    preencher($('modelo'), [], '—'); preencher($('ano'), [], '—'); atualizarBotao();
+    $('filtro').value = ''; $('filtro').disabled = true;
+    if (!$('marca').value) return;
+    msg('Carregando modelos...');
+    try {
+      modelosCache = await api(`/api/${$('tipo').value}/marcas/${$('marca').value}/modelos`);
+      preencher($('modelo'), modelosCache, 'Escolha o modelo');
+      $('filtro').disabled = false;
+      msg('');
+    } catch (e) { msg(e.message, true); }
+  }
+
+  function filtrarModelos() {
+    const t = $('filtro').value.trim().toLowerCase();
+    preencher($('modelo'), modelosCache.filter((m) => m.name.toLowerCase().includes(t)), 'Escolha o modelo');
+    preencher($('ano'), [], '—'); atualizarBotao();
+  }
+
+  async function carregarAnos() {
+    preencher($('ano'), [], '—'); atualizarBotao();
+    if (!$('modelo').value) return;
+    msg('Carregando anos...');
+    try {
+      preencher($('ano'), await api(`/api/${$('tipo').value}/marcas/${$('marca').value}/modelos/${$('modelo').value}/anos`), 'Escolha o ano');
+      msg('');
+    } catch (e) { msg(e.message, true); }
+  }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const ABREV = { janeiro:'jan', fevereiro:'fev', março:'mar', abril:'abr', maio:'mai', junho:'jun',
+                  julho:'jul', agosto:'ago', setembro:'set', outubro:'out', novembro:'nov', dezembro:'dez' };
+
+  function rotuloMes(ref) {
+    const m = /^\s*(\S+)\s+de\s+(\d{4})/i.exec(ref);
+    return m ? `${ABREV[m[1].toLowerCase()] || m[1]}/${m[2].slice(2)}` : ref;
+  }
+
+  function el(nome, attrs, texto) {
+    const e = document.createElementNS(NS, nome);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (texto !== undefined) e.textContent = texto;
+    return e;
+  }
+
+  function renderGrafico(itens) {
+    const box = $('grafico'); box.replaceChildren();
+    if (!itens.length) return;
+
+    const W = 680, H = 230, E = 86, D = 24, T = 20, B = 36; // margens
+    const precos = itens.map((i) => i.preco);
+    let min = Math.min(...precos), max = Math.max(...precos);
+    if (min === max) { min *= 0.99; max *= 1.01; }          // linha reta continua legível
+    const folga = (max - min) * 0.15; min -= folga; max += folga;
+
+    const x = (i) => itens.length === 1 ? (E + (W - D)) / 2 : E + (i * (W - D - E)) / (itens.length - 1);
+    const y = (v) => T + ((max - v) / (max - min)) * (H - T - B);
+
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+      'aria-label': 'Gráfico do histórico de preços: ' + itens.map((i) => `${i.referencia} ${brl.format(i.preco)}`).join(', ') });
+
+    // eixos e rótulos de preço (mínimo e máximo reais da série)
+    svg.append(el('line', { class: 'eixo', x1: E, y1: H - B, x2: W - D, y2: H - B }));
+    for (const v of [Math.min(...precos), Math.max(...precos)]) {
+      svg.append(el('line', { class: 'eixo', x1: E, y1: y(v), x2: W - D, y2: y(v), 'stroke-dasharray': '3 4' }));
+      svg.append(el('text', { x: E - 8, y: y(v) + 4, 'text-anchor': 'end' }, brl.format(v)));
+    }
+
+    if (itens.length > 1) {
+      svg.append(el('polyline', { class: 'linha', points: itens.map((it, i) => `${x(i)},${y(it.preco)}`).join(' ') }));
+    }
+
+    const passo = Math.ceil(itens.length / 8);                // evita rótulos sobrepostos
+    itens.forEach((it, i) => {
+      const ultimo = i === itens.length - 1;
+      const c = el('circle', { class: 'ponto' + (ultimo ? ' ultimo' : ''), cx: x(i), cy: y(it.preco), r: 5 });
+      c.append(el('title', {}, `${it.referencia}: ${brl.format(it.preco)}`));
+      svg.append(c);
+      if (i % passo === 0 || ultimo) {
+        svg.append(el('text', { x: x(i), y: H - 12, 'text-anchor': 'middle' }, rotuloMes(it.referencia)));
+      }
+    });
+    box.append(svg);
+  }
+
+  function renderHistorico(itens) {
+    const corpo = $('hist'); corpo.replaceChildren();
+    itens.forEach((h, i) => {
+      const tr = document.createElement('tr');
+      const ref = document.createElement('td'); ref.textContent = h.referencia;
+      const pr = document.createElement('td'); pr.textContent = brl.format(h.preco);
+      const va = document.createElement('td');
+      if (i > 0) {
+        const antes = itens[i - 1].preco;
+        const pct = ((h.preco - antes) / antes) * 100;
+        va.textContent = (pct > 0 ? '+' : '') + pct.toFixed(1).replace('.', ',') + '%';
+        va.className = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+      } else { va.textContent = '—'; }
+      tr.append(ref, pr, va); corpo.append(tr);
+    });
+  }
+
+  async function consultar() {
+    atual = { tipo: $('tipo').value, marca: $('marca').value, modelo: $('modelo').value, ano: $('ano').value };
+    $('consultar').disabled = true; msg('Consultando a FIPE...');
+    try {
+      const v = await api(`/api/${atual.tipo}/marcas/${atual.marca}/modelos/${atual.modelo}/anos/${atual.ano}`);
+      $('r-ref').textContent = 'Referência: ' + v.referencia;
+      $('r-preco').textContent = brl.format(v.preco);
+      $('r-nome').textContent = `${v.marca} ${v.modelo}`;
+      $('r-det').textContent = `${v.ano_modelo} | ${v.combustivel} | Código FIPE ${v.codigo_fipe}`;
+      renderGrafico(v.historico);
+      renderHistorico(v.historico);
+      $('resultado').hidden = false; msg('');
+    } catch (e) { msg(e.message, true); }
+    finally { atualizarBotao(); }
+  }
+
+  async function carregarAlertas() {
+    const lista = $('alertas'); lista.replaceChildren();
+    try {
+      const alertas = await api('/api/alertas');
+      if (!alertas.length) { const li = document.createElement('li'); li.className = 'meta'; li.textContent = 'Nenhum alerta ainda.'; lista.append(li); return; }
+      for (const a of alertas) {
+        const li = document.createElement('li'); li.className = 'alerta';
+        const txt = document.createElement('span');
+        txt.textContent = `${a.descricao}: avisar em ${brl.format(a.preco_alvo)} ou menos`;
+        const bt = document.createElement('button'); bt.className = 'ghost'; bt.textContent = 'Remover';
+        bt.addEventListener('click', async () => { try { await api('/api/alertas/' + a.id, { method:'DELETE' }); carregarAlertas(); } catch (e) { msg(e.message, true); } });
+        li.append(txt, bt); lista.append(li);
+      }
+    } catch (e) { msg(e.message, true); }
+  }
+
+  async function criarAlerta() {
+    const alvo = $('alvo').value.replace(/\D/g, '');
+    if (!alvo || !atual) { msg('Informe o preço-alvo em reais.', true); return; }
+    try {
+      await api('/api/alertas', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ...atual, preco_alvo: Number(alvo) }) });
+      $('alvo').value = ''; msg('Alerta criado.'); carregarAlertas();
+    } catch (e) { msg(e.message, true); }
+  }
+
+  $('tipo').addEventListener('change', carregarMarcas);
+  $('marca').addEventListener('change', carregarModelos);
+  $('filtro').addEventListener('input', filtrarModelos);
+  $('modelo').addEventListener('change', carregarAnos);
+  $('ano').addEventListener('change', atualizarBotao);
+  $('consultar').addEventListener('click', consultar);
+  $('criar-alerta').addEventListener('click', criarAlerta);
+
+  carregarMarcas(); carregarAlertas();
+</script>
+</body>
+</html>
